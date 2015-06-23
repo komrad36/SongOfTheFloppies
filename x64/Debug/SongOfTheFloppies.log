@@ -1,0 +1,20 @@
+﻿Build started 6/20/2015 213639.
+     1>Project "C:\Users\Komrad36\Google Drive\VS Projects\SongOfTheFloppies\SongOfTheFloppies\SongOfTheFloppies.vcxproj" on node 2 (Rebuild target(s)).
+     1>ClCompile:
+         C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\bin\x86_amd64\CL.exe /c /Zi /nologo /W3 /WX- /Od /Ob0 /D WIN32 /D _DEBUG /D _CONSOLE /D _LIB /D _UNICODE /D UNICODE /Gm /EHsc /RTC1 /MTd /GS /fp:fast /Zc:wchar_t /Zc:forScope /Fo"x64\Debug\\" /Fd"x64\Debug\vc120.pdb" /Gd /TP /errorReport:prompt main.cpp MIDI.cpp myPortAudio.cpp serial.cpp
+         serial.cpp
+         myPortAudio.cpp
+         MIDI.cpp
+         main.cpp
+         Generating Code...
+       Link:
+         C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\bin\x86_amd64\link.exe /ERRORREPORT:PROMPT /OUT:"C:\Users\Komrad36\Google Drive\VS Projects\SongOfTheFloppies\x64\Debug\SongOfTheFloppies.exe" /INCREMENTAL /NOLOGO winmm.lib portaudio_x64.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"C:\Users\Komrad36\Google Drive\VS Projects\SongOfTheFloppies\x64\Debug\SongOfTheFloppies.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"C:\Users\Komrad36\Google Drive\VS Projects\SongOfTheFloppies\x64\Debug\SongOfTheFloppies.lib" /MACHINE:X64 x64\Debug\main.obj
+         x64\Debug\MIDI.obj
+         x64\Debug\myPortAudio.obj
+         x64\Debug\serial.obj
+         SongOfTheFloppies.vcxproj -> C:\Users\Komrad36\Google Drive\VS Projects\SongOfTheFloppies\x64\Debug\SongOfTheFloppies.exe
+     1>Done Building Project "C:\Users\Komrad36\Google Drive\VS Projects\SongOfTheFloppies\SongOfTheFloppies\SongOfTheFloppies.vcxproj" (Rebuild target(s)).
+
+Build succeeded.
+
+Time Elapsed 00:00:03.10
