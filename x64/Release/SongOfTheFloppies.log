@@ -1,4 +1,4 @@
-﻿Build started 6/21/2015 220809.
+﻿Build started 8/22/2015 172521.
      1>Project "C:\Users\Komrad36\Google Drive\VS Projects\SongOfTheFloppies\SongOfTheFloppies\SongOfTheFloppies.vcxproj" on node 2 (Rebuild target(s)).
      1>ClCompile:
          C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\bin\x86_amd64\CL.exe /c /Zi /nologo /W3 /WX- /O2 /Oi /GL /D WIN32 /D NDEBUG /D _CONSOLE /D _LIB /D _UNICODE /D UNICODE /Gm- /EHsc /MT /GS /Gy /fp:fast /Zc:wchar_t /Zc:forScope /Fo"x64\Release\\" /Fd"x64\Release\vc120.pdb" /Gd /TP /errorReport:prompt main.cpp MIDI.cpp myPortAudio.cpp serial.cpp
@@ -18,4 +18,4 @@
 
 Build succeeded.
 
-Time Elapsed 00:00:03.33
+Time Elapsed 00:00:02.97

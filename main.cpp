@@ -13,6 +13,7 @@
 // and/or plays it on floppy drive stepper motors if PLAY_FLOPPY is defined
 // in MIDI.h.
 
+// mem leak checker
 #ifdef _DEBUG
 
 #ifndef DBG_NEW
@@ -32,6 +33,9 @@
 #include <fstream>
 #include <string>
 
+// will need handlers to gracefully
+// shut down audio/floppies if user
+// closes app
 #ifdef _WIN32
 #include <Windows.h>
 #define ADD_HANDLER ((BOOL)(1))

@@ -35,7 +35,7 @@ bool MIDI::loadBinaryFile() {
 	}
 
 	in.seekg(0, std::ios::end);
-	fileSize = (size_t)(in.tellg());
+	fileSize = static_cast<size_t>(in.tellg());
 	if (fileSize > MAX_MIDI_FILE_SIZE_IN_BYTES) {
 		std::cout << "File is too large! Are you sure that's a MIDI?" << std::endl;
 		return false;
@@ -81,28 +81,29 @@ size_t MIDI::readVariableLengthQuantity() {
 size_t MIDI::readFourBinaryBytes() {
 	size_t startPos = pos;
 	pos += 4;
-	return swapi4(*(uint32_t*)(rawMIDI.substr(startPos, 4).c_str()));
+	return swapi4(*reinterpret_cast<const uint32_t*>(rawMIDI.substr(startPos, 4).c_str()));
 }
 
-// read and endian-swap 4 bytes of raw data
+// read and endian-swap 2 bytes of raw data
 uint16_t MIDI::readTwoBinaryBytes() {
 	size_t startPos = pos;
 	pos += 2;
-	return swapi2(*(uint16_t*)(rawMIDI.substr(startPos, 2).c_str()));
+	return swapi2(*reinterpret_cast<const uint16_t*>(rawMIDI.substr(startPos, 2).c_str()));
 }
 
 // read and endian-swap 3 bytes of a string
 size_t ThreeBinaryBytesDirectToInt(std::string bytes) {
 	// pad out with 0 bits to make it 4 bytes, then use int32 ptr for swap
-	return swapi4(*(uint32_t*)((std::string("\0", 1) + bytes).c_str()));
+	return swapi4(*reinterpret_cast<const uint32_t*>((std::string("\0", 1) + bytes).c_str()));
 }
 
 // only 1 byte so no need for endian-swap
 uint8_t MIDI::readOneBinaryByte() {
-	return *(uint8_t*)(rawMIDI.substr(pos++, 2).c_str());
+	return *reinterpret_cast<const uint8_t*>(rawMIDI.substr(pos++, 2).c_str());
 }
 
-bool MIDI::parseBaseEvent(TrackChunk& chunk, MTrkEvent& mte) {
+bool MIDI::parseBaseMTrkEvent(TrackChunk& chunk) {
+	size_t deltaTime = readVariableLengthQuantity();
 	// determine type of event
 	// possibilities are MIDI event, sysex event, or meta event
 
@@ -111,85 +112,38 @@ bool MIDI::parseBaseEvent(TrackChunk& chunk, MTrkEvent& mte) {
 	// if it's FF, it's a meta
 	// all others are midi
 
+	BaseMTrkEvent* evt;
+
 	uint8_t firstByte = readOneBinaryByte();
-
-	BaseEvent* evt;
-	size_t length;
-	uint8_t status;
-
 	switch (firstByte) {
 	case 0xF0:
 	case 0xF7:
-		// sysex event
-		evt = new SysExEvent();
-		evt->type = EventType::SysEx;
-		length = static_cast<SysExEvent*>(evt)->length = readVariableLengthQuantity();
-		static_cast<SysExEvent*>(evt)->bytes = rawMIDI.substr(pos, length);
-		pos += length;
+		chunk.mtrkEvents.push_back(evt = new SysExEvent());
 		break;
 
 	case 0xFF:
-		// meta event
-		evt = new MetaEvent();
-		evt->type = EventType::Meta;
-		static_cast<MetaEvent*>(evt)->metaType = readOneBinaryByte();
-		length = static_cast<MetaEvent*>(evt)->length = readVariableLengthQuantity();
-		static_cast<MetaEvent*>(evt)->bytes = rawMIDI.substr(pos, length);
-		pos += length;
+		chunk.mtrkEvents.push_back(evt = new MetaEvent());
 		break;
 
 	default:
-		// MIDI event
-		evt = new MidiEvent();
-		evt->type = EventType::MIDI;
-
-		// Tricky thing: "running status." If we get an invalid status byte (< 0x80),
-		// RE-USE the status of the previous byte, and jump right into data bytes 1 and/or 2.
-
-		// Another tricky thing, sometimes there are no further bytes,
-		// sometimes there is one, sometimes there are two.
-		// The status byte determines this. See http://www.org/techspecs/midimessages.php.
-
-		if (firstByte < 0x80) {
-			status = static_cast<MidiEvent*>(evt)->status = chunk.runningStatus;
-			static_cast<MidiEvent*>(evt)->byte1 = firstByte;
-		}
-		else {
-			status = chunk.runningStatus = static_cast<MidiEvent*>(evt)->status = firstByte;
-			static_cast<MidiEvent*>(evt)->byte1 = (status >= 244) ? 0 : readOneBinaryByte();
-		}
-
-		static_cast<MidiEvent*>(evt)->byte2 = ((status >= 192 && status <= 223) || status == 243) ? 0 : readOneBinaryByte();
+		chunk.mtrkEvents.push_back(evt = new MidiEvent());
 	}
 
-	mte.evt = evt;
-	return true;
-}
-
-bool MIDI::parseMTrkEvent(TrackChunk& chunk) {
-	MTrkEvent mte = MTrkEvent();
-	mte.deltaTime = readVariableLengthQuantity();
-
-	if (!parseBaseEvent(chunk, mte)) {
-		std::cout << "Failed to parse base MIDI event." << std::endl;
-		return false;
-	}
-
-	chunk.mtrkEvents.push_back(mte);
-
+	evt->deltaTime = deltaTime;
+	evt->loadEvent(*this, chunk, firstByte);
 	return true;
 }
 
 bool MIDI::parseHeader() {
-	if (fileSize < 5)
+	if (fileSize <= TAG_LENGTH)
 		return false;
 
 	// check for correct MIDI header tag
-	if (rawMIDI.substr(0, 4) != "MThd")
+	if (rawMIDI.substr(0, TAG_LENGTH) != "MThd")
 		return false;
 
 	// get length of header chunk (should be 6)
-	pos = 4;
+	pos = TAG_LENGTH;
 
 	header.length = readFourBinaryBytes();
 
@@ -200,7 +154,7 @@ bool MIDI::parseHeader() {
 	// there could be more to the header, which we should IGNORE,
 	// so reset position past MThd tag (4), past length field (4),
 	// and past ACTUAL header length as determined by length field
-	pos = 4 + 4 + header.length;
+	pos = TAG_LENGTH + LENGTH_FIELD_LENGTH + header.length;
 
 	return true;
 }
@@ -208,20 +162,20 @@ bool MIDI::parseHeader() {
 bool MIDI::parseChunk() {
 
 	// check for correct MIDI track chunk tag
-	if (rawMIDI.substr(pos, 4) != "MTrk")
+	if (rawMIDI.substr(pos, TAG_LENGTH) != "MTrk")
 		return false;
 
 	// instantiate new chunk
 	TrackChunk chunk = TrackChunk();
 
 	// get length of chunk
-	pos += 4;
+	pos += TAG_LENGTH;
 	chunk.length = readFourBinaryBytes();
 
 	size_t chunkEnd = pos + chunk.length;
 
 	while (pos < chunkEnd) {
-		if (!parseMTrkEvent(chunk)) {
+		if (!parseBaseMTrkEvent(chunk)) {
 			std::cout << "Failed to parse MIDI MTrkEvent." << std::endl;
 			return false;
 		}
@@ -258,20 +212,20 @@ void extractTimeSignature(std::string bytes, std::ofstream& log) {
 	std::string num = (bytes.size() <= 0) ? "??" : std::to_string(bytes[0]);
 
 	// denominator (as 2^n)
-	std::string den = (bytes.size() <= 1) ? "??" : std::to_string((size_t)(pow(2, bytes[1])));
+	std::string den = (bytes.size() <= 1) ? "??" : std::to_string(static_cast<size_t>(pow(2, bytes[1])));
 
 	// MIDI clocks per metronome click
-	std::string cc = (bytes.size() <= 2) ? "??" : std::to_string(bytes[2]);
+	std::string clocksPerClick = (bytes.size() <= 2) ? "??" : std::to_string(bytes[2]);
 
 	// clocks per quarter-note
-	std::string bb = (bytes.size() <= 3) ? "??" : std::to_string(bytes[3]);
+	std::string clocksPerQtrNote = (bytes.size() <= 3) ? "??" : std::to_string(bytes[3]);
 
 	log << num << "/" << den
-		<< ", " << cc << " clocks/metronome tick, "
-		<< bb
-		<< " clocks/qtr-note." << std::endl;
+		<< ", " << clocksPerClick << " clocks/metronome tick, "
+		<< clocksPerQtrNote << " clocks/qtr-note." << std::endl;
 }
 
+// see SMPTE timecode standard
 void extractSMPTE(std::string bytes, std::ofstream& log) {
 	std::string hr = (bytes.size() <= 0) ? "??" : std::to_string(bytes[0]);
 	std::string min = (bytes.size() <= 1) ? "??" : std::to_string(bytes[1]);
@@ -306,11 +260,11 @@ void extractKeySignature(std::string bytes, std::ofstream& log) {
 	int8_t mi = bytes[1];
 
 	if (sf < 0) {
-		size_t numFlats = (size_t)(-sf);
+		size_t numFlats = static_cast<size_t>(-sf);
 		log << numFlats << " flat" << ((numFlats == 1) ? "" : "s") << ", ";
 	}
 	else if (sf > 0) {
-		size_t numSharps = (size_t)(sf);
+		size_t numSharps = static_cast<size_t>(sf);
 		log << numSharps << " sharp" << ((numSharps == 1) ? "" : "s") << ", ";
 	}
 	else {
@@ -320,11 +274,14 @@ void extractKeySignature(std::string bytes, std::ofstream& log) {
 	log << ((mi == 1) ? "minor" : "major") << std::endl;
 }
 
+// progs that play percussion or other atonal sounds
+// that floppies/sine waves can't really reproduce
+// see MIDI standard
 bool invalidProg(uint8_t prog) {
 	return (prog > 112 || (prog >= 97 && prog <= 104));
 }
 
-std::string MIDI::extractNote(size_t chan, MidiEvent* evt, bool logDrives) {
+std::string MIDI::extractNote(const size_t chan, const MidiEvent& evt, const bool logDrives) {
 	if (logDrives && chan != 10 && !channels[chan - 1].channelHasBeenUsed && !invalidProg(channels[chan - 1].prog)) {
 		++maxTotalChannels;
 		channels[chan - 1].channelHasBeenUsed = true;
@@ -336,153 +293,153 @@ std::string MIDI::extractNote(size_t chan, MidiEvent* evt, bool logDrives) {
 	}
 
 	// get octave (see MIDI standard)
-	unsigned short octave = evt->byte1 / 12 - 1;
+	unsigned short octave = evt.byte1 / 12 - 1;
 
 	// get note
-	std::string noteSelect[12] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
-	std::string note = noteSelect[evt->byte1 % 12];
-	return note + std::to_string(octave) + ", Velocity (0 - 127): " + std::to_string(evt->byte2);
+	const std::string noteSelect[12] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+	const std::string note = noteSelect[evt.byte1 % 12];
+	return note + std::to_string(octave) + ", Velocity (0 - 127): " + std::to_string(evt.byte2);
 }
 
-uint16_t pitchBendBytes(MidiEvent* evt) {
-	return ((uint16_t)evt->byte2 << 7) + (uint16_t)evt->byte1;
+uint16_t pitchBendBytes(const MidiEvent& evt) {
+	return static_cast<uint16_t>(evt.byte2 << 7) + static_cast<uint16_t>(evt.byte1);
 }
 
-std::string extractPitchBendChange(MidiEvent* evt) {
+std::string extractPitchBendChange(MidiEvent& evt) {
 	return std::to_string(pitchBendBytes(evt));
 }
 
-std::string MIDI::extractProgramChange(uint8_t chan, MidiEvent* evt) {
-	return std::to_string(channels[chan - 1].prog = evt->byte1);
+std::string MIDI::extractProgramChange(const uint8_t chan, const MidiEvent& evt) {
+	return std::to_string(channels[chan - 1].prog = evt.byte1);
 }
 
-std::string extractModeChange(MidiEvent* evt) {
-	switch (evt->byte1) {
+std::string extractModeChange(MidiEvent& evt) {
+	switch (evt.byte1) {
 	case 0x00:
-		return "Bank Select (0-127): " + std::to_string(evt->byte2);
+		return "Bank Select (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x01:
-		return "Modulation Wheel (0-127): " + std::to_string(evt->byte2);
+		return "Modulation Wheel (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x05:
-		return "Portamento Time (0-127): " + std::to_string(evt->byte2);
+		return "Portamento Time (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x06:
-		return "Data Entry, MSB (0-127): " + std::to_string(evt->byte2);
+		return "Data Entry, MSB (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x07:
-		return "Channel Volume (0-127): " + std::to_string(evt->byte2);
+		return "Channel Volume (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x0A:
-		return "Channel Pan (0-127): " + std::to_string(evt->byte2);
+		return "Channel Pan (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x0B:
-		return "Expression Control (0-127): " + std::to_string(evt->byte2);
+		return "Expression Control (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x20:
-		return "LSB for Control 0 (Bank Select) (0-127): " + std::to_string(evt->byte2);
+		return "LSB for Control 0 (Bank Select) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x21:
-		return "LSB for Control 1 (Modulation Wheel) (0-127): " + std::to_string(evt->byte2);
+		return "LSB for Control 1 (Modulation Wheel) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x22:
-		return "LSB for Control 2 (Breath Controller) (0-127): " + std::to_string(evt->byte2);
+		return "LSB for Control 2 (Breath Controller) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x23:
-		return "LSB for Control 3 (undef) (0-127): " + std::to_string(evt->byte2);
+		return "LSB for Control 3 (undef) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x24:
-		return "LSB for Control 4 (Foot Controller) (0-127): " + std::to_string(evt->byte2);
+		return "LSB for Control 4 (Foot Controller) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x25:
-		return "LSB for Control 5 (Portamento Time) (0-127): " + std::to_string(evt->byte2);
+		return "LSB for Control 5 (Portamento Time) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x26:
-		return "LSB for Control 6 (Data Entry) (0-127): " + std::to_string(evt->byte2);
+		return "LSB for Control 6 (Data Entry) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x27:
-		return "LSB for Control 7 (Channel Volume) (0-127): " + std::to_string(evt->byte2);
+		return "LSB for Control 7 (Channel Volume) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x28:
-		return "LSB for Control 8 (Balance) (0-127): " + std::to_string(evt->byte2);
+		return "LSB for Control 8 (Balance) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x29:
-		return "LSB for Control 9 (undef) (0-127): " + std::to_string(evt->byte2);
+		return "LSB for Control 9 (undef) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x2A:
-		return "LSB for Control 10 (Pan) (0-127): " + std::to_string(evt->byte2);
+		return "LSB for Control 10 (Pan) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x2B:
-		return "LSB for Control 11 (Expression Controller) (0-127): " + std::to_string(evt->byte2);
+		return "LSB for Control 11 (Expression Controller) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x2C:
-		return "LSB for Control 12 (Effect control 1) (0-127): " + std::to_string(evt->byte2);
+		return "LSB for Control 12 (Effect control 1) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x2D:
-		return "LSB for Control 13 (Effect control 2) (0-127): " + std::to_string(evt->byte2);
+		return "LSB for Control 13 (Effect control 2) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x40:
-		return "Damper/sustain " + std::string((evt->byte2 >= 64) ? "ON" : "OFF");
+		return "Damper/sustain " + std::string((evt.byte2 >= 64) ? "ON" : "OFF");
 		break;
 	case 0x41:
-		return "Portamento " + std::string((evt->byte2 >= 64) ? "ON" : "OFF");
+		return "Portamento " + std::string((evt.byte2 >= 64) ? "ON" : "OFF");
 		break;
 	case 0x46:
-		return "Sound Controller 1 (default: Sound Variation) (0-127): " + std::to_string(evt->byte2);
+		return "Sound Controller 1 (default: Sound Variation) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x47:
-		return "Sound Controller 2 (default: Timbre/Harmonic Intens.) (0-127): " + std::to_string(evt->byte2);
+		return "Sound Controller 2 (default: Timbre/Harmonic Intens.) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x48:
-		return "Sound Controller 3 (default: Release Time) (0-127): " + std::to_string(evt->byte2);
+		return "Sound Controller 3 (default: Release Time) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x49:
-		return "Sound Controller 4 (default: Attack Time) (0-127): " + std::to_string(evt->byte2);
+		return "Sound Controller 4 (default: Attack Time) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x4A:
-		return "Sound Controller 5 (default: Brightness) (0-127): " + std::to_string(evt->byte2);
+		return "Sound Controller 5 (default: Brightness) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x4B:
-		return "Sound Controller 6 (default: Decay Time) (0-127): " + std::to_string(evt->byte2);
+		return "Sound Controller 6 (default: Decay Time) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x4C:
-		return "Sound Controller 7 (default: Vibrato Rate) (0-127): " + std::to_string(evt->byte2);
+		return "Sound Controller 7 (default: Vibrato Rate) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x4D:
-		return "Sound Controller 8 (default: Vibrato Depth) (0-127): " + std::to_string(evt->byte2);
+		return "Sound Controller 8 (default: Vibrato Depth) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x4E:
-		return "Sound Controller 9 (default: Vibrato Delay) (0-127): " + std::to_string(evt->byte2);
+		return "Sound Controller 9 (default: Vibrato Delay) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x4F:
-		return "Sound Controller 10 (default: undef) (0-127): " + std::to_string(evt->byte2);
+		return "Sound Controller 10 (default: undef) (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x5B:
-		return "Effects 1 (Default==Reverb) Depth (0-127): " + std::to_string(evt->byte2);
+		return "Effects 1 (Default==Reverb) Depth (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x5C:
-		return "Effects 2 (Default==Tremolo) Depth (0-127): " + std::to_string(evt->byte2);
+		return "Effects 2 (Default==Tremolo) Depth (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x5D:
-		return "Effects 3 (Default==Chorus) Depth (0-127): " + std::to_string(evt->byte2);
+		return "Effects 3 (Default==Chorus) Depth (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x5E:
-		return "Effects 4 (Default==Celeste/Detune) Depth (0-127): " + std::to_string(evt->byte2);
+		return "Effects 4 (Default==Celeste/Detune) Depth (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x5F:
-		return "Effects 5 (Default==Phaser) Depth (0-127): " + std::to_string(evt->byte2);
+		return "Effects 5 (Default==Phaser) Depth (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x62:
-		return "NRPN LSB (0-127): " + std::to_string(evt->byte2);
+		return "NRPN LSB (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x63:
-		return "NRPN MSB (0-127): " + std::to_string(evt->byte2);
+		return "NRPN MSB (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x64:
-		return "RPN LSB (0-127): " + std::to_string(evt->byte2);
+		return "RPN LSB (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x65:
-		return "RPN MSB (0-127): " + std::to_string(evt->byte2);
+		return "RPN MSB (0-127): " + std::to_string(evt.byte2);
 		break;
 	case 0x78:
 		return "All Sound OFF";
@@ -491,7 +448,7 @@ std::string extractModeChange(MidiEvent* evt) {
 		return "Reset All Controllers";
 		break;
 	case 0x7A:
-		return "Local Control: " + std::string((evt->byte2 == 0) ? "OFF" : "ON");
+		return "Local Control: " + std::string((evt.byte2 == 0) ? "OFF" : "ON");
 		break;
 	case 0x7B:
 		return "All Notes OFF";
@@ -509,20 +466,20 @@ std::string extractModeChange(MidiEvent* evt) {
 		return "Poly Mode ON";
 		break;
 	default:
-		return "Unknown mode (Code " + std::to_string(evt->byte1) + ")";
+		return "Unknown mode (Code " + std::to_string(evt.byte1) + ")";
 	}
 }
 
 double noteToFreq(uint8_t noteID) {
-	return pow(2.0, (double)((int)noteID - 69) / 12.0)*440.0;
+	return pow(2.0, static_cast<double>(static_cast<int>(noteID - 69)) / 12.0)*440.0;
 }
 
-void MIDI::noteOff(size_t chan, MidiEvent* evt) {
+void MIDI::noteOff(const size_t chan, const MidiEvent& evt) {
 #ifdef PLAY_SINE
-	uint16_t idx = channels[chan - 1].activeNotes[evt->byte1];
+	uint16_t idx = channels[chan - 1].activeNotes[evt.byte1];
 	if (idx != NOT_ACTIVE) {
 		stream->stopAudio(idx);
-		channels[chan - 1].activeNotes[evt->byte1] = NOT_ACTIVE;
+		channels[chan - 1].activeNotes[evt.byte1] = NOT_ACTIVE;
 
 		mtx.lock();
 		availablePlayIndices.push(idx);
@@ -533,8 +490,8 @@ void MIDI::noteOff(size_t chan, MidiEvent* evt) {
 #ifdef PLAY_FLOPPY
 	if (serial->isConnected()) {
 		channels[chan - 1].isPlayingOnFloppy = false;
-		uint32_t outBytes = (uint32_t)channels[chan - 1].chanToDrive;
-		serial->writeData((void*)&outBytes, PACKET_SIZE_BYTES);
+		uint32_t outBytes = static_cast<uint32_t>(channels[chan - 1].chanToDrive);
+		serial->writeData(reinterpret_cast<void*>(&outBytes), PACKET_SIZE_BYTES);
 	}
 #endif
 
@@ -560,18 +517,18 @@ void MIDI::noteOff(size_t chan, MidiEvent* evt) {
 // up to ~1677 Hz (floppies typically can only play up
 // to ~400 Hz before the stepper motors slip)
 #ifdef PLAY_FLOPPY
-void MIDI::sendNoteToFloppy(size_t chan) {
+void MIDI::sendNoteToFloppy(const size_t chan) {
 	// floppies can't do note velocities, but
 	// don't play super quiet notes
-	if ((float)channels[chan - 1].expression * (float)channels[chan - 1].volume >= MIN_FLOPPY_VOLUME) {
-		uint32_t convertedFreq = (uint32_t)(channels[chan - 1].floppyFreq*channels[chan - 1].pitchBendFactor*FREQ_MULTIPLIER);
-		uint32_t outBytes = ((uint32_t)channels[chan - 1].chanToDrive) + (convertedFreq << 8);
-		serial->writeData((void*)&outBytes, PACKET_SIZE_BYTES);
+	if (static_cast<float>(channels[chan - 1].expression) * static_cast<float>(channels[chan - 1].volume) >= MIN_FLOPPY_VOLUME) {
+		uint32_t convertedFreq = static_cast<uint32_t>(channels[chan - 1].floppyFreq*channels[chan - 1].pitchBendFactor*FREQ_MULTIPLIER);
+		uint32_t outBytes = static_cast<uint32_t>(channels[chan - 1].chanToDrive) + (convertedFreq << 8);
+		serial->writeData(reinterpret_cast<void*>(&outBytes), PACKET_SIZE_BYTES);
 	}
 }
 #endif
 
-void MIDI::updatePlayingNotes(size_t chan) {
+void MIDI::updatePlayingNotes(const size_t chan) {
 #ifdef PLAY_SINE
 	uint16_t idx;
 	for (size_t i = 0; i < MAX_NOTES; ++i) {
@@ -590,7 +547,7 @@ void MIDI::updatePlayingNotes(size_t chan) {
 #endif
 }
 
-void MIDI::noteOn(size_t chan, MidiEvent* evt) {
+void MIDI::noteOn(const size_t chan, const MidiEvent& evt) {
 #ifdef ASSIGN_CHANNELS_TO_DRIVES_SEQUENTIALLY
 	if (chan != 10 && !channels[chan - 1].channelHasBeenUsed && !invalidProg(channels[chan - 1].prog)) {
 		channels[chan - 1].channelHasBeenUsed = true;
@@ -601,7 +558,7 @@ void MIDI::noteOn(size_t chan, MidiEvent* evt) {
 	}
 #endif
 
-	uint8_t velocity = evt->byte2;
+	uint8_t velocity = evt.byte2;
 
 	// if this note ON is being used as a note OFF,
 	// or it's a sound effect program rather than
@@ -614,7 +571,7 @@ void MIDI::noteOn(size_t chan, MidiEvent* evt) {
 	}
 
 #ifdef PLAY_SINE
-	uint16_t idx = channels[chan - 1].activeNotes[evt->byte1];
+	uint16_t idx = channels[chan - 1].activeNotes[evt.byte1];
 	if (idx == NOT_ACTIVE) {
 
 		// new note
@@ -624,10 +581,10 @@ void MIDI::noteOn(size_t chan, MidiEvent* evt) {
 			mtx.unlock();
 		}
 		else {
-			idx = channels[chan - 1].activeNotes[evt->byte1] = availablePlayIndices.front();
+			idx = channels[chan - 1].activeNotes[evt.byte1] = availablePlayIndices.front();
 			availablePlayIndices.pop();
 			mtx.unlock();
-			stream->setFreqs(idx, noteToFreq(evt->byte1), channels[chan - 1].pitchBendFactor);
+			stream->setFreqs(idx, noteToFreq(evt.byte1), channels[chan - 1].pitchBendFactor);
 			stream->setVels(idx, channels[chan - 1].expression, channels[chan - 1].volume, velocity);
 			stream->startAudio(idx);
 		}
@@ -635,7 +592,7 @@ void MIDI::noteOn(size_t chan, MidiEvent* evt) {
 	else {
 
 		// already playing note, just updated freq and/or velocity
-		stream->setFreqs(idx, noteToFreq(evt->byte1), channels[chan - 1].pitchBendFactor);
+		stream->setFreqs(idx, noteToFreq(evt.byte1), channels[chan - 1].pitchBendFactor);
 		stream->setVels(idx, channels[chan - 1].expression, channels[chan - 1].volume, velocity);
 	}
 #endif
@@ -643,7 +600,7 @@ void MIDI::noteOn(size_t chan, MidiEvent* evt) {
 #ifdef PLAY_FLOPPY
 	if (serial->isConnected() && channels[chan - 1].chanToDrive != CHANNEL_NOT_ASSIGNED) {
 		// shift all notes down to sound better on floppies...
-		uint8_t note = evt->byte1 - NOTE_DOWN_SHIFT_SEMITONES;
+		uint8_t note = evt.byte1 - NOTE_DOWN_SHIFT_SEMITONES;
 
 		// ... and if note is still too high for floppy drives,
 		// drop octaves until it's in range...
@@ -665,57 +622,57 @@ void MIDI::noteOn(size_t chan, MidiEvent* evt) {
 #ifdef VERBOSE_1
 		// printf for speed and for atomicity
 		// (intentionally outside mtx for performance)
-	printf("Channel %llu Note ON: %s\n", (unsigned long long)chan, extractNote(chan, evt, false).c_str());
+	printf("Channel %llu Note ON: %s\n", static_cast<unsigned long long>(chan), extractNote(chan, evt, false).c_str());
 #endif
 #endif
 }
 
-void MIDI::setChannelExpression(size_t chan, MidiEvent* evt) {
-	channels[chan - 1].expression = evt->byte2;
+void MIDI::setChannelExpression(const size_t chan, const MidiEvent& evt) {
+	channels[chan - 1].expression = evt.byte2;
 	updatePlayingNotes(chan);
 
 #ifdef LOG_NOTES
 #ifdef VERBOSE_1
 	// printf for speed and for atomicity
 	// (intentionally outside mtx for performance)
-	printf("Channel %llu Expression Change: %u\n", (unsigned long long) chan, channels[chan - 1].expression);
+	printf("Channel %llu Expression Change: %u\n", static_cast<unsigned long long>(chan), channels[chan - 1].expression);
 #endif
 #endif
 }
 
-void MIDI::setChannelVolume(size_t chan, MidiEvent* evt) {
-	channels[chan - 1].volume = evt->byte2;
+void MIDI::setChannelVolume(const size_t chan, const MidiEvent& evt) {
+	channels[chan - 1].volume = evt.byte2;
 	updatePlayingNotes(chan);
 
 #ifdef LOG_NOTES
 	// printf for speed and for atomicity
 	// (intentionally outside mtx for performance)
-	printf("Channel %llu Master Volume: %u\n", (unsigned long long) chan, channels[chan - 1].volume);
+	printf("Channel %llu Master Volume: %u\n", static_cast<unsigned long long>(chan), channels[chan - 1].volume);
 #endif
 }
 
 double pitchBendBytesToFactor(uint16_t bytes) {
-	return pow(2.0, MAX_PITCH_BEND_SEMITONES*((double)bytes - 8192.0) / 8192.0 / fNUM_SEMITONES_IN_OCTAVE);
+	return pow(2.0, MAX_PITCH_BEND_SEMITONES*(static_cast<double>(bytes) - 8192.0) / 8192.0 / fNUM_SEMITONES_IN_OCTAVE);
 }
 
-void MIDI::setPitchBend(size_t chan, MidiEvent* evt) {
+void MIDI::setPitchBend(const size_t chan, const MidiEvent& evt) {
 	channels[chan - 1].pitchBendFactor = pitchBendBytesToFactor(pitchBendBytes(evt));
 	updatePlayingNotes(chan);
 
 #ifdef LOG_NOTES
 	// printf for speed and for atomicity
 	// (intentionally outside mtx for performance)
-	printf("Channel %llu Pitch BEND! x%g\n", (unsigned long long) chan, channels[chan - 1].pitchBendFactor);
+	printf("Channel %llu Pitch BEND! x%g\n", static_cast<unsigned long long>(chan), channels[chan - 1].pitchBendFactor);
 #endif
 }
 
 // output hex string for SysEx events
 // ignored (not handled, just printed directly to log)
 // by this program
-void generateVariableLengthMessage(std::string bytes, std::ofstream& log) {
+void generateVariableLengthMessage(const std::string& bytes, std::ofstream& log) {
 	log << "0x";
 	for (size_t i = 0; i < bytes.size(); ++i) {
-		log << std::hex << (uint16_t)bytes[i];
+		log << std::hex << static_cast<uint16_t>(bytes[i]);
 	}
 	log << std::dec << std::endl;
 }
@@ -728,14 +685,14 @@ void MIDI::decodeDivision() {
 	if (header.division < 0x8000) {
 		header.TicksPerQtrNoteMode = true;
 		ticksPerQtrNote = header.division;
-		ticksPerSecond = MICROSECONDS_PER_SECOND * (double)ticksPerQtrNote / (double)usecPerQtrNote;
+		ticksPerSecond = MICROSECONDS_PER_SECOND * static_cast<double>(ticksPerQtrNote) / static_cast<double>(usecPerQtrNote);
 	}
 	else { //bit 15 is 1
 		header.TicksPerQtrNoteMode = false;
-		uint8_t fps = -(uint8_t)((header.division - 0x8000) >> 8);
-		uint8_t ticksPerFrame = (uint8_t)(header.division & 0xFF);
+		uint8_t fps = -static_cast<uint8_t>((header.division - 0x8000) >> 8);
+		uint8_t ticksPerFrame = static_cast<uint8_t>(header.division & 0xFF);
 
-		FPS = (fps == 29) ? 29.97 : (double)fps;
+		FPS = (fps == 29) ? 29.97 : static_cast<double>(fps);
 		ticksPerSecond = ticksPerFrame * FPS;
 	}
 }
@@ -776,115 +733,18 @@ void MIDI::stepThroughCompletedMidiStructure() {
 	log << "Division: " << header.division << std::endl;
 	log << "# of tracks: " << header.ntrks << std::endl;
 
-	uint8_t status;
-
 	for (size_t i = 0; i < chunks.size(); ++i) {
 		log << ">>> Track " << i << ":" << std::endl;
 
 		log << "# of MTrkEvents: " << chunks[i].mtrkEvents.size() << std::endl;
-		for (auto it = chunks[i].mtrkEvents.begin(), end = chunks[i].mtrkEvents.end(); it != end; ++it) {
+		for (BaseMTrkEvent* evt : chunks[i].mtrkEvents) {
 			if (isClosing) {
 				log.close();
 				cleanUpMemory();
 				return;
 			}
-			log << it->deltaTime << " | ";
-			switch (it->evt->type) {
-			case EventType::MIDI:
-				log << "MIDI Event: ";
-
-				status = static_cast<MidiEvent*>(it->evt)->status;
-
-				if (status >= 0x80 && status <= 0x8F) {
-					log << "Chan " << status - 0x7F << " Note OFF: " << extractNote(status - 0x7F, static_cast<MidiEvent*>(it->evt), false) << std::endl;
-				}
-				else if (status >= 0x90 && status <= 0x9F) {
-					log << "Chan " << status - 0x8F << " Note ON: " << extractNote(status - 0x8F, static_cast<MidiEvent*>(it->evt), true) << std::endl;
-				}
-				else if (status >= 0xB0 && status <= 0xBF) {
-					log << "Chan " << status - 0xAF << " Control/Mode Change: " << extractModeChange(static_cast<MidiEvent*>(it->evt)) << std::endl;
-				}
-				else if (status >= 0xC0 && status <= 0xCF) {
-					log << "Chan " << status - 0xBF << " Program Change: Select Program (0-127): " << extractProgramChange(status - 0xBF, static_cast<MidiEvent*>(it->evt)) << std::endl;
-				}
-				else if (status >= 0xE0 && status <= 0xEF) {
-					log << "Chan " << status - 0xDF << " Pitch Bend Change (0-16383): " << extractPitchBendChange(static_cast<MidiEvent*>(it->evt)) << " (factor==" << pitchBendBytesToFactor(pitchBendBytes(static_cast<MidiEvent*>(it->evt))) << ')' << std::endl;
-				}
-				else {
-					log << "Unknown (Code 0x" << std::hex << (uint16_t)(static_cast<MidiEvent*>(it->evt)->status) << std::dec << ")" << std::endl;
-				}
-			break;
-			case EventType::Meta:
-				log << "Meta Event: ";
-				switch (static_cast<MetaEvent*>(it->evt)->metaType) {
-				case 0x01:
-				case 0x0A:
-				case 0x0B:
-					log << "Text: " << static_cast<MetaEvent*>(it->evt)->bytes.c_str() << std::endl;
-					break;
-				case 0x02:
-					log << "Copyright Notice: " << static_cast<MetaEvent*>(it->evt)->bytes.c_str() << std::endl;
-					break;
-				case 0x03:
-					log << "Track Name: " << static_cast<MetaEvent*>(it->evt)->bytes.c_str() << std::endl;
-					break;
-				case 0x04:
-					log << "Instrument Name: " << static_cast<MetaEvent*>(it->evt)->bytes.c_str() << std::endl;
-					break;
-				case 0x05:
-					log << "Lyric: " << static_cast<MetaEvent*>(it->evt)->bytes.c_str() << std::endl;
-					break;
-				case 0x06:
-					log << "Marker: " << static_cast<MetaEvent*>(it->evt)->bytes.c_str() << std::endl;
-					break;
-				case 0x07:
-					log << "Cue Point: " << static_cast<MetaEvent*>(it->evt)->bytes.c_str() << std::endl;
-					break;
-				case 0x08:
-					log << "Program Name: " << static_cast<MetaEvent*>(it->evt)->bytes.c_str() << std::endl;
-					break;
-				case 0x09:
-					log << "Device Name: " << static_cast<MetaEvent*>(it->evt)->bytes.c_str() << std::endl;
-					break;
-				case 0x20:
-					log << "MIDI Channel: " << atoll(static_cast<MetaEvent*>(it->evt)->bytes.c_str()) << std::endl;
-					break;
-				case 0x21:
-					log << "MIDI Port: " << atoll(static_cast<MetaEvent*>(it->evt)->bytes.c_str()) << std::endl;
-					break;
-				case 0x2F:
-					log << "End of Track" << std::endl;
-					break;
-				case 0x51:
-					usecPerQtrNote = ThreeBinaryBytesDirectToInt(static_cast<MetaEvent*>(it->evt)->bytes);
-					log << "Set Tempo: " << usecPerQtrNote << " microsec per quarter note" << std::endl;
-					log << "New Division Decode: ";
-					decodeDivision();
-					log << (header.TicksPerQtrNoteMode ? "Ticks/QtrNote Method: " : "FPS Method: ") << ticksPerSecond << " delta-time ticks per second." << std::endl;
-					break;
-				case 0x54:
-					log << "SMPTE Offset: ";
-					extractSMPTE(static_cast<MetaEvent*>(it->evt)->bytes, log);
-					break;
-				case 0x58:
-					log << "Time Signature: ";
-					extractTimeSignature(static_cast<MetaEvent*>(it->evt)->bytes, log);
-					break;
-				case 0x59:
-					log << "Key Signature: ";
-					extractKeySignature(static_cast<MetaEvent*>(it->evt)->bytes, log);
-					break;
-				case 0x7F:
-					log << "Sequencer Specific Data" << std::endl;
-					break;
-				default:
-					log << "Unknown (Code 0x" << std::hex << (uint16_t)(static_cast<MetaEvent*>(it->evt)->metaType) << std::dec << ")" << std::endl;
-				}
-				break;
-			default: // SysEx:
-				log << "SysEx Event: " << static_cast<SysExEvent*>(it->evt)->bytes.size() << " byte message: ";
-				generateVariableLengthMessage(static_cast<SysExEvent*>(it->evt)->bytes, log);
-			}
+			log << std::left << std::setw(DELTA_TIME_WIDTH) << evt->deltaTime << "|  " << std::setw(0);
+			evt->processEvent(*this, log);
 		}
 	}
 
@@ -893,25 +753,22 @@ void MIDI::stepThroughCompletedMidiStructure() {
 	log.close();
 }
 
-void MIDI::playTrack(size_t track) {
+void MIDI::playTrack(const size_t track) {
 
 	printf("Thread %lu launched for track playback.\n", track);
 
-	uint8_t status;
-
 	chunks[track].elapsedMS = 0.0;
-	for (auto it = chunks[track].mtrkEvents.begin(), end = chunks[track].mtrkEvents.end(); it != end; ++it) {
+	for (BaseMTrkEvent* evt : chunks[track].mtrkEvents) {
 
-		if (it->deltaTime != 0) {
+		if (evt->deltaTime != 0) {
 			if (track == 0) {
 				ready = true;
-				
 				cv.notify_one();
 			}
 			mtx.lock();
-			chunks[track].elapsedMS += (double)it->deltaTime / ticksPerSecond * MILLISECONDS_PER_SECOND;
+			chunks[track].elapsedMS += static_cast<double>(evt->deltaTime) / ticksPerSecond * MILLISECONDS_PER_SECOND;
 			mtx.unlock();
-			std::this_thread::sleep_until(startTime + std::chrono::nanoseconds((long long)(NANOSECONDS_PER_MILLISECOND*chunks[track].elapsedMS)));
+			std::this_thread::sleep_until(startTime + std::chrono::nanoseconds(static_cast<long long>(NANOSECONDS_PER_MILLISECOND*chunks[track].elapsedMS)));
 		}
 		
 		if (isClosing) {
@@ -923,65 +780,7 @@ void MIDI::playTrack(size_t track) {
 			exit(EXIT_FAILURE);
 		}
 
-		switch (it->evt->type) {
-		case EventType::MIDI:
-			status = static_cast<MidiEvent*>(it->evt)->status;
-
-			if (status >= 0x80 && status <= 0x8F) {
-				noteOff(status - 0x7F, static_cast<MidiEvent*>(it->evt));
-			}
-			// don't use 0x99 (channel 10) as it is an effects/percussion channel
-			else if (status >= 0x90 && status <= 0x9F && status != 0x99) {
-				noteOn(status - 0x8F, static_cast<MidiEvent*>(it->evt));
-			}
-			else if (status >= 0xC0 && status <= 0xCF) {
-				channels[status - 0xC0].prog = static_cast<MidiEvent*>(it->evt)->byte1;
-			}
-			else if (status >= 0xB0 && status <= 0xBF) {
-				if (static_cast<MidiEvent*>(it->evt)->byte1 == 0x07) setChannelVolume(status - 0xAF, static_cast<MidiEvent*>(it->evt));
-				if (static_cast<MidiEvent*>(it->evt)->byte1 == 0x0B) setChannelExpression(status - 0xAF, static_cast<MidiEvent*>(it->evt));
-			}
-			else if (status >= 0xE0 && status <= 0xEF) {
-				setPitchBend(status - 0xDF, static_cast<MidiEvent*>(it->evt));
-			}
-			break;
-		case EventType::Meta:
-			switch (static_cast<MetaEvent*>(it->evt)->metaType) {
-			case 0x01:
-			case 0x0A:
-			case 0x0B:
-#ifdef LOG_NOTES
-				printf("Text: %s\n", static_cast<MetaEvent*>(it->evt)->bytes.c_str());
-#endif
-				break;
-			case 0x05:
-#ifdef LOG_NOTES
-				printf("Lyric: %s\n", static_cast<MetaEvent*>(it->evt)->bytes.c_str());
-#endif
-				break;
-			case 0x2F:
-				if (track == 0) {
-					ready = true;
-					cv.notify_one();
-				}
-#ifdef LOG_NOTES
-				printf("End of Track %llu\n", (unsigned long long) track);
-				printf("Elapsed time: %g sec\n", chunks[track].elapsedMS / 1000.0);
-#endif
-				break;
-			case 0x51:
-				mtx.lock();
-				usecPerQtrNote = ThreeBinaryBytesDirectToInt(static_cast<MetaEvent*>(it->evt)->bytes);
-				decodeDivision();
-				mtx.unlock();
-#ifdef LOG_NOTES
-				printf("New Tempo: %g ticks per second\n", ticksPerSecond);
-#endif
-			}
-			break;
-		case EventType::SysEx:
-			break;
-		}
+		evt->playEvent(*this, track);
 	}
 
 	printf("Thread %lu terminating.\n", track);
@@ -1011,6 +810,10 @@ void MIDI::playMusic() {
 
 #ifdef PLAY_FLOPPY
 	serial = new Serial();
+	if (!serial->isConnected()) {
+		std::cout << "Aborting." << std::endl;
+		return;
+	}
 #endif
 
 #ifdef PLAY_SINE
@@ -1044,7 +847,7 @@ void MIDI::playMusic() {
 #ifdef PLAY_FLOPPY
 	int buffer;
 	std::cout << std::endl << "Waiting for Arduino to signal READY..." << std::endl;
-	while (serial->readData((void*)&buffer, sizeof buffer) <= 0) {
+	while (serial->readData(reinterpret_cast<void*>(&buffer), sizeof buffer) <= 0) {
 		if (isClosing) {
 			cleanUpAudio();
 			cleanUpMemory();
@@ -1097,20 +900,19 @@ void MIDI::playMusic() {
 }
 
 void MIDI::cleanUpMemory() {
-	for (size_t i = 0; i < chunks.size(); ++i) {
-		for (auto it = chunks[i].mtrkEvents.begin(), end = chunks[i].mtrkEvents.end(); it != end; ++it) {
-			switch (it->evt->type) {
-			case EventType::Meta:
-				delete (static_cast<MetaEvent*>(it->evt));
-				break;
-			case EventType::MIDI:
-				delete (static_cast<MidiEvent*>(it->evt));
-				break;
-			case EventType::SysEx:
-				delete (static_cast<SysExEvent*>(it->evt));
-			}
+	for (auto&& chunk : chunks) {
+		for (BaseMTrkEvent* evt : chunk.mtrkEvents) {
+			delete evt;
 		}
 	}
+
+#ifdef PLAY_FLOPPY
+	delete serial;
+#endif
+
+#ifdef PLAY_SINE
+	delete stream;
+#endif
 }
 
 void MIDI::cleanUpAudio() {
@@ -1126,7 +928,7 @@ void MIDI::cleanUpAudio() {
 		// tell each drive in turn to stop playing
 		// by writing a 0 frequency to it
 		for (uint32_t i = 0; i < freeDrive; ++i) {
-			serial->writeData((void*)&i, PACKET_SIZE_BYTES);
+			serial->writeData(reinterpret_cast<void*>(&i), PACKET_SIZE_BYTES);
 		}
 	}
 
@@ -1135,11 +937,188 @@ void MIDI::cleanUpAudio() {
 	// wait for drives and/or streams to stop
 	std::this_thread::sleep_for(std::chrono::milliseconds(MS_TO_WAIT_AFTER_PLAYING));
 
-#ifdef PLAY_FLOPPY
-	delete serial;
-#endif
+}
 
-#ifdef PLAY_SINE
-	delete stream;
+void MidiEvent::loadEvent(MIDI& midi, TrackChunk& chunk, const uint8_t firstByte) {
+	// Tricky thing: "running status." If we get an invalid status byte (< 0x80),
+	// RE-USE the status of the previous byte, and jump right into data bytes 1 and/or 2.
+
+	// Another tricky thing, sometimes there are no further bytes,
+	// sometimes there is one, sometimes there are two.
+	// The status byte determines this. See http://www.org/techspecs/midimessages.php.
+
+	if (firstByte < 0x80) {
+		status = chunk.runningStatus;
+		byte1 = firstByte;
+	}
+	else {
+		status = chunk.runningStatus = firstByte;
+		byte1 = (status >= 244) ? 0 : midi.readOneBinaryByte();
+	}
+
+	byte2 = ((status >= 192 && status <= 223) || status == 243) ? 0 : midi.readOneBinaryByte();
+}
+
+void MidiEvent::processEvent(MIDI& midi, std::ofstream& log) {
+	log << "MIDI Event: ";
+
+	if (status >= 0x80 && status <= 0x8F) {
+		log << "Chan " << status - 0x7F << " Note OFF: " << midi.extractNote(status - 0x7F, *this, false) << std::endl;
+	}
+	else if (status >= 0x90 && status <= 0x9F) {
+		log << "Chan " << status - 0x8F << " Note ON: " << midi.extractNote(status - 0x8F, *this, true) << std::endl;
+	}
+	else if (status >= 0xB0 && status <= 0xBF) {
+		log << "Chan " << status - 0xAF << " Control/Mode Change: " << extractModeChange(*this) << std::endl;
+	}
+	else if (status >= 0xC0 && status <= 0xCF) {
+		log << "Chan " << status - 0xBF << " Program Change: Select Program (0-127): " << midi.extractProgramChange(status - 0xBF, *this) << std::endl;
+	}
+	else if (status >= 0xE0 && status <= 0xEF) {
+		log << "Chan " << status - 0xDF << " Pitch Bend Change (0-16383): " << extractPitchBendChange(*this) << " (factor==" << pitchBendBytesToFactor(pitchBendBytes(*this)) << ')' << std::endl;
+	}
+	else {
+		log << "Unknown (Code 0x" << std::hex << status << std::dec << ")" << std::endl;
+	}
+}
+
+void MidiEvent::playEvent(MIDI& midi, const size_t track) {
+	if (status >= 0x80 && status <= 0x8F) {
+		midi.noteOff(status - 0x7F, *this);
+	}
+	// don't use 0x99 (channel 10) as it is an effects/percussion channel
+	else if (status >= 0x90 && status <= 0x9F && status != 0x99) {
+		midi.noteOn(status - 0x8F, *this);
+	}
+	else if (status >= 0xC0 && status <= 0xCF) {
+		midi.channels[status - 0xC0].prog = byte1;
+	}
+	else if (status >= 0xB0 && status <= 0xBF) {
+		if (byte1 == 0x07) midi.setChannelVolume(status - 0xAF, *this);
+		if (byte1 == 0x0B) midi.setChannelExpression(status - 0xAF, *this);
+	}
+	else if (status >= 0xE0 && status <= 0xEF) {
+		midi.setPitchBend(status - 0xDF, *this);
+	}
+}
+
+void SysExEvent::loadEvent(MIDI& midi, TrackChunk& chunk, const uint8_t firstByte) {
+	length = midi.readVariableLengthQuantity();
+	bytes = midi.rawMIDI.substr(midi.pos, length);
+	midi.pos += length;
+}
+
+void SysExEvent::processEvent(MIDI& midi, std::ofstream& log) {
+	log << "SysEx Event: " << bytes.size() << " byte message: ";
+	generateVariableLengthMessage(bytes, log);
+}
+
+void MetaEvent::loadEvent(MIDI& midi, TrackChunk& chunk, const uint8_t firstByte) {
+	metaType = midi.readOneBinaryByte();
+	length = midi.readVariableLengthQuantity();
+	bytes = midi.rawMIDI.substr(midi.pos, length);
+	midi.pos += length;
+}
+
+void MetaEvent::processEvent(MIDI& midi, std::ofstream& log) {
+	log << "Meta Event: ";
+	switch (metaType) {
+	case 0x01:
+	case 0x0A:
+	case 0x0B:
+		log << "Text: " << bytes.c_str() << std::endl;
+		break;
+	case 0x02:
+		log << "Copyright Notice: " << bytes.c_str() << std::endl;
+		break;
+	case 0x03:
+		log << "Track Name: " << bytes.c_str() << std::endl;
+		break;
+	case 0x04:
+		log << "Instrument Name: " << bytes.c_str() << std::endl;
+		break;
+	case 0x05:
+		log << "Lyric: " << bytes.c_str() << std::endl;
+		break;
+	case 0x06:
+		log << "Marker: " << bytes.c_str() << std::endl;
+		break;
+	case 0x07:
+		log << "Cue Point: " << bytes.c_str() << std::endl;
+		break;
+	case 0x08:
+		log << "Program Name: " << bytes.c_str() << std::endl;
+		break;
+	case 0x09:
+		log << "Device Name: " << bytes.c_str() << std::endl;
+		break;
+	case 0x20:
+		log << "MIDI Channel: " << atoll(bytes.c_str()) << std::endl;
+		break;
+	case 0x21:
+		log << "MIDI Port: " << atoll(bytes.c_str()) << std::endl;
+		break;
+	case 0x2F:
+		log << "End of Track" << std::endl;
+		break;
+	case 0x51:
+		midi.usecPerQtrNote = ThreeBinaryBytesDirectToInt(bytes);
+		log << "Set Tempo: " << midi.usecPerQtrNote << " microsec per quarter note" << std::endl;
+		log << "New Division Decode: ";
+		midi.decodeDivision();
+		log << (midi.header.TicksPerQtrNoteMode ? "Ticks/QtrNote Method: " : "FPS Method: ") << ticksPerSecond << " delta-time ticks per second." << std::endl;
+		break;
+	case 0x54:
+		log << "SMPTE Offset: ";
+		extractSMPTE(bytes, log);
+		break;
+	case 0x58:
+		log << "Time Signature: ";
+		extractTimeSignature(bytes, log);
+		break;
+	case 0x59:
+		log << "Key Signature: ";
+		extractKeySignature(bytes, log);
+		break;
+	case 0x7F:
+		log << "Sequencer Specific Data" << std::endl;
+		break;
+	default:
+		log << "Unknown (Code 0x" << std::hex << static_cast<uint16_t>(metaType) << std::dec << ")" << std::endl;
+	}
+}
+
+void MetaEvent::playEvent(MIDI& midi, const size_t track) {
+	switch (metaType) {
+	case 0x01:
+	case 0x0A:
+	case 0x0B:
+#ifdef LOG_NOTES
+		printf("Text: %s\n", bytes.c_str());
 #endif
+		break;
+	case 0x05:
+#ifdef LOG_NOTES
+		printf("Lyric: %s\n", bytes.c_str());
+#endif
+		break;
+	case 0x2F:
+		if (track == 0) {
+			ready = true;
+			cv.notify_one();
+		}
+#ifdef LOG_NOTES
+		printf("End of Track %llu\n", static_cast<unsigned long long>(track));
+		printf("Elapsed time: %g sec\n", midi.chunks[track].elapsedMS / MILLISECONDS_PER_SECOND);
+#endif
+		break;
+	case 0x51:
+		mtx.lock();
+		midi.usecPerQtrNote = ThreeBinaryBytesDirectToInt(bytes);
+		midi.decodeDivision();
+		mtx.unlock();
+#ifdef LOG_NOTES
+		printf("New Tempo: %g ticks per second\n", ticksPerSecond);
+#endif
+	}
 }

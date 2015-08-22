@@ -18,26 +18,26 @@
 #define _USE_MATH_DEFINES
 
 #define TABLE_SIZE						(100000)
+#define fTABLE_SIZE						(100000.0)
 #define SAMPLE_RATE						(44100.0)
 #define AUTO_FRAMES_PER_BUFFER			(0)
 
 // growth and decay constants
 // are to allow fade-in and -out
 // of sine waves to prevent pops
-#define GROWTH_FACTOR					(1.01f)
-#define SHRINK_FACTOR					(0.997f)
-#define INITIAL_DECAY_STATE				(0.006f)
+#define GROWTH_FACTOR					(1.005f)
+#define SHRINK_FACTOR					(0.998f)
+#define INITIAL_DECAY_STATE				(0.00011f)
 
 #define MAX_DECAY_STATE					(1.0f)
-#define MIN_DECAY_STATE					(0.001f)
+#define MIN_DECAY_STATE					(0.0001f)
 
 #define MAX_SIMUL						(200)
 #define ENABLE_REALTIME_SCHEDULING		(1)
 #define MS_TO_WAIT_AFTER_STREAM_LAUNCH	(500)
 
 #define MAX_VEL (127.0f)
-
-// can be set higher than actual max (127.0)
+// can/should be set higher than actual max (127.0)
 // to produce quieter output
 // and prevent pops/clipping
 #define OVERHEAD_MAX (1500.0f)
@@ -91,14 +91,14 @@ public:
 
 
 	void initSineTable();
-	PaStream* getStream();
-	void setFreqs(uint16_t idx, double freq, double pitchBend);
-	void setChannelVel(uint16_t idx, uint8_t channelVel);
-	void setChannelExpression(uint16_t idx, uint8_t channelExpression);
-	void setVels(uint16_t idx, uint8_t channelExpression, uint8_t channelVel, uint8_t noteVel);
-	void setPitchBend(uint16_t idx, double pitchBend);
-	void startAudio(uint16_t idx);
-	void stopAudio(uint16_t idx);
+	const PaStream* getStream() const;
+	void setFreqs(const uint16_t idx, const double freq, const double pitchBend);
+	void setChannelVel(const uint16_t idx, const uint8_t channelVel);
+	void setChannelExpression(const uint16_t idx, const uint8_t channelExpression);
+	void setVels(const uint16_t idx, const uint8_t channelExpression, const uint8_t channelVel, const uint8_t noteVel);
+	void setPitchBend(const uint16_t idx, const double pitchBend);
+	void startAudio(const uint16_t idx);
+	void stopAudio(const uint16_t idx);
 
 };
 

@@ -1,5 +1,5 @@
 /*******************************************************************
-*   serial.h
+*   serial->h
 *   SongOfTheFloppies
 *	Kareem Omar
 *
@@ -17,7 +17,7 @@
 
 // define without parens so
 // macro below can adjust for Linux
-#define BAUD 500000
+#define BAUD 250000
 
 #ifdef _WIN32
 // wchar_t string required for Windows
@@ -25,7 +25,6 @@
 #else
 #define PORT "/dev/ttyACM0"
 #endif
-
 
 
 
@@ -75,6 +74,9 @@ private:
 #endif
 
 public:
+	// only one thread at a time, please
+	std::mutex serialMutex;
+
 	// handles connection setup
 	Serial();
 
@@ -82,16 +84,12 @@ public:
 	~Serial();
 
 #ifndef _WIN32
-	int set_interface_attribs(speed_t speed);
+	int set_interface_attribs(const speed_t speed);
 #endif
 
-	long long readData(void *buffer, unsigned long numBytes);
-
-	bool writeData(void *buffer, unsigned long numBytes);
-
-	bool isConnected();
-
-	std::mutex serialMutex;
+	long long readData(void* const buffer, const unsigned long numBytes);
+	bool writeData(void* const buffer, const unsigned long numBytes);
+	bool isConnected() const;
 
 };
 

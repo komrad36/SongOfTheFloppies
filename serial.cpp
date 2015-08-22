@@ -1,5 +1,5 @@
 /*******************************************************************
-*   serial.cpp
+*   serial->cpp
 *   SongOfTheFloppies
 *	Kareem Omar
 *
@@ -15,7 +15,7 @@
 #include "serial.h"
 
 #ifndef _WIN32
-int Serial::set_interface_attribs(speed_t speed) {
+int Serial::set_interface_attribs(const speed_t speed) {
 
 memset(&tty, 0, sizeof tty);
 
@@ -127,9 +127,7 @@ Serial::Serial() {
 }
 
 Serial::~Serial() {
-
 	if (connected) {
-
 		connected = false;
 
 #ifdef _WIN32
@@ -141,7 +139,7 @@ Serial::~Serial() {
 	}
 }
 
-long long Serial::readData(void *buffer, unsigned long numBytes) {
+long long Serial::readData(void* const buffer, const unsigned long numBytes) {
 #ifdef _WIN32
 	unsigned long actuallyRead;
 
@@ -150,17 +148,17 @@ long long Serial::readData(void *buffer, unsigned long numBytes) {
 
 	// if available data, read as much as possible without getting more than numBytes
 	if (status.cbInQue > 0 && ReadFile(hSerial, buffer, status.cbInQue > numBytes ? numBytes : status.cbInQue, &actuallyRead, NULL) && actuallyRead != 0)
-		return (long long)actuallyRead;
+		return static_cast<long long>(actuallyRead);
 
 	// if nothing read or some other error
 	return -1;
 #else
-	return read(hSerial, buffer, (size_t)numBytes);
+	return read(hSerial, buffer, static_cast<size_t>(numBytes));
 #endif
 
 }
 
-bool Serial::writeData(void *buffer, unsigned long numBytes) {
+bool Serial::writeData(void* const buffer, const unsigned long numBytes) {
 #ifdef _WIN32
 	unsigned long bytesActuallySent;
 	
@@ -185,6 +183,6 @@ bool Serial::writeData(void *buffer, unsigned long numBytes) {
 #endif
 }
 
-bool Serial::isConnected() {
+bool Serial::isConnected() const {
 	return connected;
 }

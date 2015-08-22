@@ -20,14 +20,9 @@ static int patestCallback(const void *inputBuffer, void *outputBuffer,
 	PaStreamCallbackFlags statusFlags,
 	void *userData)
 {
-	paData *data = (paData*)userData;
-	float *out = (float*)outputBuffer;
+	paData *data = reinterpret_cast<paData*>(userData);
+	float *out = reinterpret_cast<float*>(outputBuffer);
 	float cumulativeOut;
-
-	// silence compiler warnings about unused vars
-	(void)timeInfo;
-	(void)statusFlags;
-	(void)inputBuffer;
 
 	// for each frame to construct
 	for (unsigned long i = 0; i < framesPerBuffer; ++i) {
@@ -66,57 +61,60 @@ Stream::~Stream() {
 	Pa_Terminate();
 }
 
-void Stream::startAudio(uint16_t idx) {
-	data.phase[idx] = 0;
-	data.currentDecayState[idx] = INITIAL_DECAY_STATE;
+void Stream::startAudio(const uint16_t idx) {
+	if (data.currentDecayState[idx] < MIN_DECAY_STATE) {
+		data.phase[idx] = 0;
+		data.currentDecayState[idx] = INITIAL_DECAY_STATE;
+	}
 	data.decayFactor[idx] = GROWTH_FACTOR;
 }
 
 // don't actually stop audio (would pop)
 // instead let the stream start shrinking in
 // amplitude naturally
-void Stream::stopAudio(uint16_t idx) {
+void Stream::stopAudio(const uint16_t idx) {
 	data.decayFactor[idx] = SHRINK_FACTOR;
 }
 
-void Stream::setPitchBend(uint16_t idx, double pitchBend) {
+void Stream::setPitchBend(const uint16_t idx, const double pitchBend) {
 	this->pitchBend[idx] = pitchBend;
-	data.phaseIncrement[idx] = (unsigned long)(noteFreq[idx] * pitchBend * TABLE_SIZE / ((double)SAMPLE_RATE) + 0.5);
+	data.phaseIncrement[idx] = static_cast<unsigned long>((noteFreq[idx] * pitchBend * fTABLE_SIZE / SAMPLE_RATE) + 0.5);
 }
 
-void Stream::setFreqs(uint16_t idx, double freq, double pitchBend) {
+void Stream::setFreqs(const uint16_t idx, const double freq, const double pitchBend) {
 	this->noteFreq[idx]			= freq;
 	this->pitchBend[idx]		= pitchBend;
-	data.phaseIncrement[idx]	= (unsigned long)(freq * pitchBend * TABLE_SIZE / ((double)SAMPLE_RATE) + 0.5);
+	data.phaseIncrement[idx]	= static_cast<unsigned long>((freq * pitchBend * fTABLE_SIZE / SAMPLE_RATE) + 0.5);
 }
 
-void Stream::setChannelExpression(uint16_t idx, uint8_t channelExpression) {
+void Stream::setChannelExpression(const uint16_t idx, const uint8_t channelExpression) {
 	this->channelExpression[idx] = channelExpression;
-	data.normalizedVel[idx] = (float)noteVel[idx] / OVERHEAD_MAX * (float)channelVel[idx] / MAX_VEL * (float)channelExpression / MAX_VEL;
+	data.normalizedVel[idx] = static_cast<float>(noteVel[idx]) / OVERHEAD_MAX * static_cast<float>(channelVel[idx]) / MAX_VEL * static_cast<float>(channelExpression) / MAX_VEL;
 }
 
-void Stream::setChannelVel(uint16_t idx, uint8_t channelVel) {
+void Stream::setChannelVel(const uint16_t idx, const uint8_t channelVel) {
 	this->channelVel[idx]	= channelVel;
-	data.normalizedVel[idx] = (float)noteVel[idx] / OVERHEAD_MAX * (float)channelVel / MAX_VEL * (float)channelExpression[idx] / MAX_VEL;
+	data.normalizedVel[idx] = static_cast<float>(noteVel[idx]) / OVERHEAD_MAX * static_cast<float>(channelVel) / MAX_VEL * static_cast<float>(channelExpression[idx]) / MAX_VEL;
 }
 
-void Stream::setVels(uint16_t idx, uint8_t channelExpression, uint8_t channelVel, uint8_t noteVel) {
+void Stream::setVels(const uint16_t idx, const uint8_t channelExpression, const uint8_t channelVel, const uint8_t noteVel) {
 	this->channelExpression[idx]	= channelExpression;
 	this->channelVel[idx]			= channelVel;
 	this->noteVel[idx]				= noteVel;
-	data.normalizedVel[idx]			= (float)noteVel / OVERHEAD_MAX * (float)channelVel / MAX_VEL * (float)channelExpression / MAX_VEL;
+	data.normalizedVel[idx]			= static_cast<float>(noteVel) / OVERHEAD_MAX * static_cast<float>(channelVel) / MAX_VEL * static_cast<float>(channelExpression) / MAX_VEL;
 }
 
 // high-resolution table of single, complete sine period
 void Stream::initSineTable() {
 	for (size_t i = 0; i < TABLE_SIZE; ++i) {
-		data.sine[i] = (float)sin(((double)i / (double)TABLE_SIZE) * M_PI * 2.0);
+		data.sine[i] = static_cast<float>(sin(static_cast<double>(i) / fTABLE_SIZE * M_PI * 2.0));
 	}
 }
 
 Stream::Stream() {
 	err = Pa_Initialize();
-	if (err != paNoError) goto error;
+	if (err != paNoError)
+		goto error;
 
 #ifdef WIN32
 	outputParameters.device = Pa_GetHostApiInfo(Pa_HostApiTypeIdToHostApiIndex(PaHostApiTypeId::paASIO))->defaultOutputDevice;
@@ -138,7 +136,7 @@ Stream::Stream() {
 		&outputParameters,
 		SAMPLE_RATE,
 		AUTO_FRAMES_PER_BUFFER,
-		paClipOff,
+		paNoFlag,
 		patestCallback,
 		&data);
 	if (err != paNoError) goto error;
@@ -156,6 +154,11 @@ Stream::Stream() {
 	// sleep to let asio/alsa initialize
 	std::this_thread::sleep_for(std::chrono::milliseconds(MS_TO_WAIT_AFTER_STREAM_LAUNCH));
 
+	for (size_t i = 0; i < MAX_SIMUL; ++i) {
+		data.phase[i] = 0;
+		data.currentDecayState[i] = INITIAL_DECAY_STATE;
+	}
+
 	return;
 
 error:
@@ -172,6 +175,6 @@ error:
 	}
 }
 
-PaStream* Stream::getStream() {
+const PaStream* Stream::getStream() const {
 	return stream;
 }

@@ -17,7 +17,7 @@
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LocalDebuggerCommandArguments>"C:\Users\Komrad36\Google Drive\VS Projects\SongOfTheFloppies\x64\Release\flo_rida-right_round.mid"</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>"C:\Users\Komrad36\Google Drive\VS Projects\SongOfTheFloppies\x64\Release\avicii-wake_me_up_v1.mid"</LocalDebuggerCommandArguments>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='ASIO Debug|x64'">
@@ -25,7 +25,7 @@
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <LocalDebuggerCommandArguments>"C:\Users\Komrad36\Google Drive\VS Projects\SongOfTheFloppies\x64\Release\flo_rida-right_round.mid"</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>"C:\Users\Komrad36\Google Drive\VS Projects\SongOfTheFloppies\x64\Release\avicii-wake_me_up_v1.mid"</LocalDebuggerCommandArguments>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='ASIO Release|x64'">
