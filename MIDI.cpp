@@ -495,15 +495,10 @@ void MIDI::noteOff(const size_t chan, const MidiEvent& evt) {
 	}
 #endif
 
-
-#ifdef LOG_NOTES
-#ifdef VERBOSE_1
-#ifdef VERBOSE_2
+#if defined(LOG_NOTES) && defined(VERBOSE_1) && defined(VERBOSE_2)
 		// printf for speed and for atomicity
 		// (intentionally outside mtx for performance)
 	printf("Channel %u Note OFF: %s\n", chan, extractNote(chan, evt, false).c_str());
-#endif
-#endif
 #endif
 }
 
@@ -618,12 +613,10 @@ void MIDI::noteOn(const size_t chan, const MidiEvent& evt) {
 	}
 #endif
 
-#ifdef LOG_NOTES
-#ifdef VERBOSE_1
+#if defined(LOG_NOTES) && defined(VERBOSE_1)
 		// printf for speed and for atomicity
 		// (intentionally outside mtx for performance)
 	printf("Channel %llu Note ON: %s\n", static_cast<unsigned long long>(chan), extractNote(chan, evt, false).c_str());
-#endif
 #endif
 }
 
@@ -631,12 +624,10 @@ void MIDI::setChannelExpression(const size_t chan, const MidiEvent& evt) {
 	channels[chan - 1].expression = evt.byte2;
 	updatePlayingNotes(chan);
 
-#ifdef LOG_NOTES
-#ifdef VERBOSE_1
+#if defined(LOG_NOTES) && defined(VERBOSE_1)
 	// printf for speed and for atomicity
 	// (intentionally outside mtx for performance)
 	printf("Channel %llu Expression Change: %u\n", static_cast<unsigned long long>(chan), channels[chan - 1].expression);
-#endif
 #endif
 }
 
@@ -1117,7 +1108,7 @@ void MetaEvent::playEvent(MIDI& midi, const size_t track) {
 		midi.usecPerQtrNote = ThreeBinaryBytesDirectToInt(bytes);
 		midi.decodeDivision();
 		mtx.unlock();
-#ifdef LOG_NOTES
+#if defined(LOG_NOTES) && defined(VERBOSE_1)
 		printf("New Tempo: %g ticks per second\n", ticksPerSecond);
 #endif
 	}

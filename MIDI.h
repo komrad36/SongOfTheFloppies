@@ -15,12 +15,12 @@
 
 // USER-ADJUSTABLE PARAMETERS //
 
-#define PLAY_SINE
-//#define PLAY_FLOPPY
+//#define PLAY_SINE
+#define PLAY_FLOPPY
 
 #define LOG_NOTES
-#define VERBOSE_1
-#define VERBOSE_2
+//#define VERBOSE_1
+//#define VERBOSE_2
 
 
 
